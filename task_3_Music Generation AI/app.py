@@ -142,7 +142,12 @@ def notes_to_midi(prediction_output, output_path="generated.mid"):
     output_notes = []
 
     for pattern in prediction_output:
-        if "." in pattern:  # a chord (stored as normalOrder ints)
+        # A chord is stored as normalOrder integers (optionally dot-separated),
+        # e.g. "4.7" or sometimes a single-integer chord like "1".
+        # A note name always contains a letter (e.g. "C4", "F#3"), so checking
+        # for "all digits/dots" is a more reliable chord test than just "." in pattern.
+        is_chord = all(ch.isdigit() or ch == "." for ch in pattern)
+        if is_chord:
             chord_notes = [note.Note(int(n)) for n in pattern.split(".")]
             for n in chord_notes:
                 n.storedInstrument = instrument.Piano()
