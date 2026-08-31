@@ -95,20 +95,36 @@ def resolve_source(source: str):
 
 
 def estimate_age_gender(deepface_module, frame, x1, y1, x2, y2):
-    """Crop the head/face region of a person box and run DeepFace age/gender
-    analysis on it. Returns a label string, or None if analysis fails
-    (e.g. no clear face visible)."""
-    box_height = y2 - y1
-    head_y2 = y1 + int(box_height * HEAD_CROP_FRACTION)
-    face_crop = frame[max(0, y1):head_y2, max(0, x1):x2]
+    """Crop a generous head/upper-body region of a person box, then let
+    DeepFace's own face detector (RetinaFace) locate and align the actual
+    face within that crop before running age/gender analysis.
 
-    if face_crop.size == 0:
+    This is more reliable than blindly cropping a fixed fraction of the box,
+    because RetinaFace confirms a real face was found and aligns it properly
+    before classification. If no confident face is found, we skip labeling
+    that frame rather than forcing a guess on a non-face image (which is
+    what was producing consistently wrong results before).
+
+    Returns a label string, or None if no confident face is found.
+    """
+    box_height = y2 - y1
+    # Give the detector a wider region to search in (top 55% instead of a
+    # tight 35%) so it isn't handed a pre-cut, potentially chin-less crop.
+    head_y2 = y1 + int(box_height * 0.55)
+    margin_x = int((x2 - x1) * 0.15)
+    crop_x1 = max(0, x1 - margin_x)
+    crop_x2 = x2 + margin_x
+    face_region = frame[max(0, y1):head_y2, crop_x1:crop_x2]
+
+    if face_region.size == 0:
         return None
 
     try:
         analysis = deepface_module.DeepFace.analyze(
-            face_crop, actions=["age", "gender"],
-            enforce_detection=False, silent=True,
+            face_region, actions=["age", "gender"],
+            detector_backend="retinaface",  # confirms + aligns a real face first
+            enforce_detection=True,          # skip this frame if no face is found
+            silent=True,
         )
         result = analysis[0]
         age = int(result["age"])
@@ -124,6 +140,8 @@ def estimate_age_gender(deepface_module, frame, x1, y1, x2, y2):
 
         return f"{gender}, ~{age}y"
     except Exception:
+        # No confident face found in this crop, or detector backend
+        # unavailable — caller falls back to holding the previous label.
         return None
 
 
